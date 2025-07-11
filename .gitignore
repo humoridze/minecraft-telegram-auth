@@ -1,0 +1,7 @@
+# Папки
+.idea/
+target/
+
+# Файлы
+dependency-reduced-pom.xml
+TelegramAuth.iml

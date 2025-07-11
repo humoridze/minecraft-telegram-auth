@@ -1,0 +1,20 @@
+name: TelegramAuth
+version: '${project.version}'
+main: ru.humoridze.telegramAuth.TelegramAuth
+api-version: '1.21'
+Author: 'humoridze'
+website: 'https://t.me/legendagachimuchi'
+
+commands:
+  login:
+    description: 'Вход'
+    aliases:
+      - 'l'
+  changepassword:
+    description: 'Смена пароля'
+    aliases:
+      - 'cp'
+  whitelist:
+    description: 'Управление вайтлистом'
+    usage: '/whitelist <add/remove/list> [игрок]'
+    permission: 'telegramAuth.whitelist'

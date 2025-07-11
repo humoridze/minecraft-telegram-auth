@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 2024 humoridze. All rights reserved.
+ * 
+ * This software is proprietary and confidential.
+ * Unauthorized copying, modification, or distribution is strictly prohibited.
+ */
+
+package ru.humoridze.telegramAuth.events;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerMoveEvent;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class FreezerEvent implements Listener {
+
+    private static Map<String, Location> freezeplayer = new HashMap<String, Location>();
+    
+    public static void freezeplayer(String name) {
+        Player player = Bukkit.getPlayer(name);
+        if (player != null) {
+            freezeplayer.put(name, player.getLocation());
+        }
+    }
+    
+    public static void unfreezeplayer(String name) {
+        freezeplayer.remove(name);
+    }
+    
+    public static boolean isPlayerFrozen(String name) {
+        return freezeplayer.containsKey(name);
+    }
+    
+    @EventHandler
+    public void onPlayerMove(PlayerMoveEvent event) {
+        if (freezeplayer.containsKey(event.getPlayer().getName())) {
+            event.getPlayer().teleport(freezeplayer.get(event.getPlayer().getName()));
+        }
+    }
+} 
