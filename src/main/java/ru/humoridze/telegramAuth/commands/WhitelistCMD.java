@@ -83,17 +83,13 @@ public class WhitelistCMD implements CommandExecutor {
             sender.sendMessage(ChatColor.YELLOW + "Игрок " + username + " не в вайтлисте!");
             return;
         }
-        
         // Удаляем из вайтлиста Bukkit
         org.bukkit.OfflinePlayer offlinePlayer = org.bukkit.Bukkit.getOfflinePlayer(username);
         if (offlinePlayer.isWhitelisted()) {
             offlinePlayer.setWhitelisted(false);
         }
-        
         // Удаляем из нашей системы
-        String uuid = getPlayerUUID(username);
-        if (uuid != null) {
-            AuthManager.removeFromWhitelist(username);
+        if (AuthManager.removeFromWhitelist(username)) {
             sender.sendMessage(ChatColor.GREEN + "Игрок " + username + " удален из вайтлиста!");
         } else {
             sender.sendMessage(ChatColor.RED + "Ошибка удаления игрока " + username + " из вайтлиста!");
@@ -114,17 +110,5 @@ public class WhitelistCMD implements CommandExecutor {
         }
     }
     
-    private String getPlayerUUID(String username) {
-        org.bukkit.entity.Player onlinePlayer = org.bukkit.Bukkit.getPlayer(username);
-        if (onlinePlayer != null) {
-            return onlinePlayer.getUniqueId().toString();
-        }
-        
-        org.bukkit.OfflinePlayer offlinePlayer = org.bukkit.Bukkit.getOfflinePlayer(username);
-        if (offlinePlayer.hasPlayedBefore()) {
-            return offlinePlayer.getUniqueId().toString();
-        }
-        
-        return null;
-    }
+    // Удаляю getPlayerUUID, больше не нужен
 } 

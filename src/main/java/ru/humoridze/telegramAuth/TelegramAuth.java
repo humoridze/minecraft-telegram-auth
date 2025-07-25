@@ -28,6 +28,13 @@ public final class TelegramAuth extends JavaPlugin {
         // Инициализируем AuthManager с экземпляром плагина
         AuthManager.initialize(this);
 
+        for (String username : AuthManager.getRegisteredUsers()) {
+            String userKey = AuthManager.getUsernameHash(username);
+            if (AuthManager.isUserWhitelisted(username)) {
+                org.bukkit.Bukkit.getOfflinePlayer(username).setWhitelisted(true);
+            }
+        }
+
         Bukkit.getServer().getPluginManager().registerEvents(new OnJoinEvent(), this);
         Bukkit.getServer().getPluginManager().registerEvents(new FreezerEvent(), this);
         Bukkit.getServer().getPluginManager().registerEvents(new MuterEvent(), this);
