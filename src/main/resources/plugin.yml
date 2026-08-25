@@ -1,9 +1,8 @@
 name: TelegramAuth
 version: '${project.version}'
 main: ru.humoridze.telegramAuth.TelegramAuth
-api-version: '1.21'
-Author: 'humoridze'
-website: 'https://t.me/legendagachimuchi'
+api-version: '1.20'
+author: humoridze
 
 commands:
   login:
@@ -18,3 +17,8 @@ commands:
     description: 'Управление вайтлистом'
     usage: '/whitelist <add/remove/list> [игрок]'
     permission: 'telegramAuth.whitelist'
+
+permissions:
+  telegramAuth.whitelist:
+    description: Управление вайтлистом плагина
+    default: op

@@ -1,0 +1,10 @@
+username: changeme
+token: changeme
+server-ip: "changeme"
+telegram-link: "changeme"
+rules-url: "changeme"
+min-password-length: 6
+login-timeout-seconds: 60
+max-login-attempts: 5
+skip-password-on-same-ip: true
+admin-telegram-ids: []

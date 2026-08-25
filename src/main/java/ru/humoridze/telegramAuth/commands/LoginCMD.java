@@ -13,7 +13,6 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import ru.humoridze.telegramAuth.AuthManager;
-import ru.humoridze.telegramAuth.events.FreezerEvent;
 
 public class LoginCMD implements CommandExecutor {
     @Override
@@ -23,31 +22,38 @@ public class LoginCMD implements CommandExecutor {
             return true;
         }
 
-        if (strings.length == 0) {
-            commandSender.sendMessage(ChatColor.RED + "Использование: /login <пароль>");
+        Player player = (Player) commandSender;
+        String username = player.getName();
+
+        if (AuthManager.isUserAuthenticated(username)) {
+            player.sendMessage(ChatColor.GREEN + "Вы уже авторизованы!");
             return true;
         }
 
-        Player p = (Player) commandSender;
-        String username = p.getName();
-        String password = strings[0];
+        if (AuthManager.isPendingTelegramConfirm(username)) {
+            player.sendMessage(ChatColor.YELLOW + "Пароль принят. Подтвердите вход через Telegram.");
+            return true;
+        }
 
-        // Проверяем, не авторизован ли уже игрок
-        if (AuthManager.isUserAuthenticated(username) && !FreezerEvent.isPlayerFrozen(username)) {
-            p.sendMessage(ChatColor.GREEN + "Вы уже авторизованы!");
+        if (strings.length == 0) {
+            player.sendMessage(ChatColor.RED + "Использование: /login <пароль>");
             return true;
         }
 
         if (!AuthManager.isUserRegistered(username)) {
-            p.sendMessage(ChatColor.RED + "Вы не зарегистрированы! Зарегистрируйтесь через Telegram бота.");
+            player.sendMessage(ChatColor.RED + "Вы не зарегистрированы! Зарегистрируйтесь через Telegram бота.");
             return true;
         }
 
-
+        String password = strings[0];
         if (AuthManager.authenticateUser(username, password)) {
-            AuthManager.handleSuccessfulAuth(p);
+            AuthManager.handleSuccessfulAuth(player);
         } else {
-            p.sendMessage(ChatColor.RED + "Неверный пароль!");
+            boolean kicked = AuthManager.registerFailedLogin(username);
+            if (!kicked) {
+                player.sendMessage(ChatColor.RED + "Неверный пароль! Осталось попыток: "
+                        + AuthManager.remainingLoginAttempts(username));
+            }
         }
 
         return true;

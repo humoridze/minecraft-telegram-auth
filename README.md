@@ -1,199 +1,95 @@
-# 🔐 TelegramAuth Plugin
+# TelegramAuth
 
-**Проприетарное программное обеспечение**  
-*Copyright (c) 2024 humoridze. All rights reserved.*
+Spigot/Paper plugin that registers players through a Telegram bot and requires password + Telegram confirmation before they can play.
 
----
+## Requirements
 
-## 📋 Описание
+- Java 8+
+- Spigot or Paper 1.20+
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
-TelegramAuth — это высоконадежный плагин для Minecraft серверов, обеспечивающий двухфакторную аутентификацию через Telegram. Плагин предоставляет безопасную систему авторизации с уведомлениями в реальном времени и управлением доступом.
+## Build
 
-## ⚠️ Лицензирование
+```bash
+mvn -DskipTests package
+```
 
-**ВНИМАНИЕ:** Данный плагин является проприетарным программным обеспечением. Все права защищены.
+The shaded jar is written to `target/TelegramAuth-2.0.jar`.
 
-### Запрещено:
-- ❌ Копирование, модификация или распространение кода
-- ❌ Обратная инженерия или декомпиляция
-- ❌ Использование в коммерческих целях без лицензии
-- ❌ Удаление уведомлений об авторских правах
+## Install
 
-### Разрешено:
-- ✅ Использование на серверах после приобретения лицензии
-- ✅ Создание резервных копий для личного использования
-- ✅ Получение технической поддержки (при наличии лицензии)
+1. Put the jar in `plugins/`.
+2. Start the server once to generate `plugins/TelegramAuth/config.yml`.
+3. Fill in the bot credentials and server details.
+4. Restart the server.
 
-## 🚀 Возможности
+The bot stays disabled while `username` or `token` is still `changeme`.
 
-### 🔐 Безопасная аутентификация
-- **Двухфакторная аутентификация** через Telegram
-- **Хэширование паролей** с использованием SHA-256
-- **Проверка IP-адресов** для дополнительной безопасности
-- **Автоматическая блокировка** при подозрительной активности
+## Configuration
 
-### 📱 Telegram интеграция
-- **Мгновенные уведомления** о входах в игру
-- **Интерактивные кнопки** для подтверждения действий
-- **Спойлеры для паролей** для защиты конфиденциальности
-- **Управление вайтлистом** через Telegram бота
-
-### 🛡️ Система безопасности
-- **Автоматическое замораживание** неавторизованных игроков
-- **Мут системы** для предотвращения спама
-- **Вайтлист управление** с правами администратора
-- **Отслеживание IP-адресов** для обнаружения подозрительной активности
-
-### ⚙️ Административные функции
-- **Команда `/changepassword`** для смены пароля
-- **Команда `/whitelist`** для управления доступом
-- **Автоматическое сохранение** конфигурации
-- **Логирование** всех действий
-
-## 📦 Установка
-
-### Требования
-- **Minecraft Server** 1.8+ (Spigot/Paper)
-- **Java** 8 или выше
-- **Telegram Bot Token** (получить у @BotFather)
-
-### Шаги установки
-
-1. **Скачайте плагин** (требуется лицензия)
-2. **Поместите JAR файл** в папку `plugins/`
-3. **Запустите сервер** для генерации конфигурации
-4. **Настройте config.yml**:
-   ```yaml
-   username: "your_bot_username"
-   token: "your_bot_token"
-   ```
-5. **Перезапустите сервер**
-
-## ⚙️ Конфигурация
-
-### Основные настройки
 ```yaml
-# Telegram Bot настройки
-username: "your_bot_username"
-token: "your_bot_token"
-
-# Настройки безопасности
-enable_ip_check: true
-enable_whitelist: true
-password_min_length: 6
+username: changeme
+token: changeme
+server-ip: changeme
+telegram-link: changeme
+rules-url: changeme
+min-password-length: 6
+login-timeout-seconds: 60
+max-login-attempts: 5
+skip-password-on-same-ip: true
+admin-telegram-ids: []
 ```
 
-### Права доступа
-```yaml
-# Права для команд
-telegramAuth.whitelist: true  # Управление вайтлистом
-```
+| Key | Description |
+|---|---|
+| `username` | Bot username without `@` |
+| `token` | Bot token from BotFather |
+| `server-ip` | Address shown after registration |
+| `telegram-link` | Bot URL shown to unregistered players |
+| `rules-url` | Link sent after a successful login |
+| `min-password-length` | Minimum password length |
+| `login-timeout-seconds` | Kick if the player does not finish auth in time |
+| `max-login-attempts` | Wrong-password attempts before kick |
+| `skip-password-on-same-ip` | If the IP matches the last login, skip `/login` and only ask for Telegram confirmation |
+| `admin-telegram-ids` | Telegram chat IDs allowed to use `/whitelist` in the bot |
 
-## 🎮 Команды
+Player data is stored in `plugins/TelegramAuth/auth_data.yml`. Passwords are hashed. New hashes are salted SHA-256; older unsalted SHA-256 hashes still verify.
 
-### Для игроков
-| Команда | Описание | Использование |
-|---------|----------|---------------|
-| `/login <пароль>` | Вход в игру | `/login mypassword123` |
-| `/changepassword <старый> <новый> <подтверждение>` | Смена пароля | `/changepassword old123 new456 new456` |
+## Auth flow
 
-### Для администраторов
-| Команда | Описание | Использование |
-|---------|----------|---------------|
-| `/whitelist add <игрок>` | Добавить в вайтлист | `/whitelist add PlayerName` |
-| `/whitelist remove <игрок>` | Удалить из вайтлиста | `/whitelist remove PlayerName` |
-| `/whitelist list` | Список игроков в вайтлисте | `/whitelist list` |
+1. The player registers in Telegram (`/start` → nickname → password) and is added to the whitelist.
+2. An unregistered or non-whitelisted player is kicked on login.
+3. A registered player joins frozen and muted. They must run `/login <password>` unless the last IP matches and `skip-password-on-same-ip` is true.
+4. Telegram asks the linked account to confirm the login.
+5. Until confirmation, the player cannot move, chat, use commands (except `/login` / `/l`), break/place blocks, open inventories, or fight.
+6. Timeout or too many wrong passwords kicks the player.
+7. Denying the login in Telegram kicks the account and rotates the password.
 
-## 🔧 API для разработчиков
+## In-game commands
 
-### Основные методы AuthManager
-```java
-// Регистрация пользователя
-AuthManager.registerUser(username, password, telegramChatId);
+| Command | Permission | Description |
+|---|---|---|
+| `/login <password>` | everyone | Authenticate. Alias: `/l` |
+| `/changepassword <old> <new> <new>` | everyone | Change password after a successful login. Alias: `/cp` |
+| `/whitelist add <player>` | `telegramAuth.whitelist` | Add a registered player to the whitelist |
+| `/whitelist remove <player>` | `telegramAuth.whitelist` | Remove from the whitelist and kick if online |
+| `/whitelist list` | `telegramAuth.whitelist` | List whitelisted players |
 
-// Аутентификация
-AuthManager.authenticateUser(username, password);
+`telegramAuth.whitelist` defaults to `op`.
 
-// Проверка регистрации
-AuthManager.isUserRegistered(username);
+This plugin registers `/whitelist` and overrides the vanilla command.
 
-// Получение Chat ID
-AuthManager.getTelegramChatId(username);
-```
+## Telegram commands
 
-### События
-```java
-// Обработка входа игрока
-AuthManager.handlePlayerJoin(player);
+| Command | Who | Description |
+|---|---|---|
+| `/start` | anyone | Register, or show the linked account |
+| `/kick` | linked account | Kick yourself from the server |
+| `/whitelist add\|remove\|list` | `admin-telegram-ids` only | Same whitelist controls as in-game |
+| `#message` | linked account, while online | Send that text as the player in Minecraft chat |
 
-// Успешная аутентификация
-AuthManager.handleSuccessfulAuth(player);
-```
+Registration nicknames must match Minecraft rules: 3–16 characters, `A-Z`, `a-z`, `0-9`, `_`.
 
-## 🛡️ Безопасность
+## License
 
-### Защита данных
-- **Хэширование паролей** с использованием SHA-256
-- **Безопасное хранение** конфигурации
-- **Проверка IP-адресов** для предотвращения несанкционированного доступа
-- **Автоматическое блокирование** при подозрительной активности
-
-### Рекомендации
-1. **Используйте сложные пароли** (минимум 6 символов)
-2. **Регулярно обновляйте** пароли
-3. **Мониторьте логи** на предмет подозрительной активности
-4. **Ограничивайте доступ** к конфигурационным файлам
-
-## 📁 Структура проекта
-
-```
-TelegramAuth/
-├── java/ru/humoridze/telegramAuth/
-│   ├── TelegramAuth.java          # Основной класс плагина
-│   ├── BotTelegram.java           # Telegram бот
-│   ├── AuthManager.java           # Управление аутентификацией
-│   ├── User.java                  # Модель пользователя
-│   ├── PasswordHasher.java        # Хэширование паролей
-│   ├── Handler.java               # Обработчик событий
-│   ├── commands/                  # Команды плагина
-│   │   ├── LoginCMD.java
-│   │   ├── ChangepasswordCMD.java
-│   │   └── WhitelistCMD.java
-│   └── events/                    # Обработчики событий
-│       ├── OnJoinEvent.java
-│       ├── PlayerLoginEvent.java
-│       ├── FreezerEvent.java
-│       └── MuterEvent.java
-├── resources/
-│   └── plugin.yml                 # Конфигурация плагина
-├── LICENSE                        # Проприетарная лицензия
-└── README.md                      # Документация
-```
-
-## 📞 Поддержка
-
-### Получение лицензии
-Для приобретения лицензии и получения технической поддержки обращайтесь к автору.
-
-### Контакты
-- **Автор:** humoridze
-- **Тип лицензии:** Проприетарная
-- **Версия:** 1.0
-
-### Техническая поддержка
-- **Документация:** Включена в README
-- **Примеры использования:** См. раздел API
-- **Конфигурация:** Подробно описана выше
-
-## ⚠️ Отказ от ответственности
-
-Автор не несет ответственности за:
-- Любые повреждения или потери данных
-- Несовместимость с другими плагинами
-- Проблемы с производительностью сервера
-- Безопасность данных пользователей
-
----
-
-**© 2024 humoridze. Все права защищены.**  
-*Проприетарное программное обеспечение. Несанкционированное использование запрещено.* 
+Proprietary. See `LICENSE`.

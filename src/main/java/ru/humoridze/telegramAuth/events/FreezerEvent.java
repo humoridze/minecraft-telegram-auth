@@ -7,39 +7,52 @@
 
 package ru.humoridze.telegramAuth.events;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerMoveEvent;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class FreezerEvent implements Listener {
 
-    private static Map<String, Location> freezeplayer = new HashMap<String, Location>();
-    
+    private static final ConcurrentHashMap<String, Location> freezeplayer = new ConcurrentHashMap<>();
+
     public static void freezeplayer(String name) {
-        Player player = Bukkit.getPlayer(name);
+        Player player = org.bukkit.Bukkit.getPlayer(name);
         if (player != null) {
-            freezeplayer.put(name, player.getLocation());
+            freezeplayer.put(name.toLowerCase(), player.getLocation().clone());
         }
     }
-    
+
     public static void unfreezeplayer(String name) {
-        freezeplayer.remove(name);
+        freezeplayer.remove(name.toLowerCase());
     }
-    
+
     public static boolean isPlayerFrozen(String name) {
-        return freezeplayer.containsKey(name);
+        return freezeplayer.containsKey(name.toLowerCase());
     }
-    
-    @EventHandler
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        if (freezeplayer.containsKey(event.getPlayer().getName())) {
-            event.getPlayer().teleport(freezeplayer.get(event.getPlayer().getName()));
+        Location freezeLocation = freezeplayer.get(event.getPlayer().getName().toLowerCase());
+        if (freezeLocation == null) {
+            return;
         }
+        Location destination = event.getTo();
+        if (destination == null) {
+            return;
+        }
+        if (destination.getX() == freezeLocation.getX()
+                && destination.getY() == freezeLocation.getY()
+                && destination.getZ() == freezeLocation.getZ()) {
+            return;
+        }
+        Location locked = freezeLocation.clone();
+        locked.setYaw(destination.getYaw());
+        locked.setPitch(destination.getPitch());
+        event.setTo(locked);
     }
-} 
+}

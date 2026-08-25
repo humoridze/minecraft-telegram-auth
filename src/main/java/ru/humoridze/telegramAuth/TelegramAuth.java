@@ -9,72 +9,119 @@ package ru.humoridze.telegramAuth;
 
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
-import ru.humoridze.telegramAuth.commands.*;
+import ru.humoridze.telegramAuth.commands.ChangepasswordCMD;
+import ru.humoridze.telegramAuth.commands.LoginCMD;
 import ru.humoridze.telegramAuth.commands.WhitelistCMD;
-import ru.humoridze.telegramAuth.events.OnJoinEvent;
-import ru.humoridze.telegramAuth.events.FreezerEvent;
+import ru.humoridze.telegramAuth.events.GuardEvent;
 import ru.humoridze.telegramAuth.events.MuterEvent;
+import ru.humoridze.telegramAuth.events.OnJoinEvent;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 
+import java.util.List;
+
 public final class TelegramAuth extends JavaPlugin {
+    private static TelegramAuth instance;
     public static BotTelegram bot;
+
+    public static TelegramAuth getInstance() {
+        return instance;
+    }
 
     @Override
     public void onEnable() {
-        System.out.println("[TelegramAuth] Plugin has been enabled");
+        instance = this;
+        saveDefaultConfig();
 
-        // Инициализируем AuthManager с экземпляром плагина
         AuthManager.initialize(this);
 
         for (String username : AuthManager.getRegisteredUsers()) {
-            String userKey = AuthManager.getUsernameHash(username);
             if (AuthManager.isUserWhitelisted(username)) {
-                org.bukkit.Bukkit.getOfflinePlayer(username).setWhitelisted(true);
+                Bukkit.getOfflinePlayer(username).setWhitelisted(true);
             }
         }
 
-        Bukkit.getServer().getPluginManager().registerEvents(new OnJoinEvent(), this);
-        Bukkit.getServer().getPluginManager().registerEvents(new FreezerEvent(), this);
-        Bukkit.getServer().getPluginManager().registerEvents(new MuterEvent(), this);
-        Bukkit.getServer().getPluginManager().registerEvents(new ru.humoridze.telegramAuth.events.PlayerLoginEvent(), this);
-        Handler handler = new Handler();
-        handler.runTaskTimer(this,0,1);
+        Bukkit.getPluginManager().registerEvents(new OnJoinEvent(), this);
+        Bukkit.getPluginManager().registerEvents(new FreezerEvent(), this);
+        Bukkit.getPluginManager().registerEvents(new MuterEvent(), this);
+        Bukkit.getPluginManager().registerEvents(new ru.humoridze.telegramAuth.events.PlayerLoginEvent(), this);
+        Bukkit.getPluginManager().registerEvents(new GuardEvent(), this);
+
         getCommand("login").setExecutor(new LoginCMD());
         getCommand("changepassword").setExecutor(new ChangepasswordCMD());
         getCommand("whitelist").setExecutor(new WhitelistCMD());
 
-        // Инициализация бота
-        bot = new BotTelegram();
-        String botToken = bot.getBotToken();
-        String botUsername = bot.getBotUsername();
+        String botToken = getConfig().getString("token", "changeme");
+        String botUsername = getConfig().getString("username", "changeme");
 
-        if ("changeme".equals(botToken) || "changeme".equals(botUsername)) {
-            System.out.println("[TelegramAuth] WARNING: Please set your bot token and username in plugins/telegramAuth/config.yml");
-            System.out.println("[TelegramAuth] Bot functionality will be disabled until configured properly");
+        if ("changeme".equals(botToken) || "changeme".equals(botUsername)
+                || botToken == null || botUsername == null
+                || botToken.isEmpty() || botUsername.isEmpty()) {
+            getLogger().warning("Укажите token и username бота в plugins/TelegramAuth/config.yml");
+            getLogger().warning("Бот отключен, пока конфиг не будет заполнен");
         } else {
             try {
+                bot = new BotTelegram(botUsername, botToken);
                 TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
                 botsApi.registerBot(bot);
-                System.out.println("[TelegramAuth] Telegram bot registered successfully: @" + botUsername);
+                getLogger().info("Telegram-бот зарегистрирован: @" + botUsername);
             } catch (TelegramApiException e) {
-                System.out.println("[TelegramAuth] ERROR: Failed to register Telegram bot: " + e.getMessage());
-                System.out.println("[TelegramAuth] Please check your bot token and username in plugins/telegramAuth/config.yml");
-                bot = null; // Устанавливаем бота в null при ошибке
+                getLogger().severe("Не удалось зарегистрировать Telegram-бота: " + e.getMessage());
+                getLogger().severe("Проверьте token и username в plugins/TelegramAuth/config.yml");
+                bot = null;
             }
         }
 
-        // Запускаем задачу для периодического сохранения конфигурации
-        Bukkit.getScheduler().runTaskTimerAsynchronously(this, () -> {
-            AuthManager.saveConfigs();
-        }, 600L, 600L); // Каждые 30 секунд (600 тиков)
+        Bukkit.getScheduler().runTaskTimerAsynchronously(this, AuthManager::saveConfigs, 600L, 600L);
+
+        for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
+            AuthManager.handlePlayerJoin(player);
+        }
     }
 
     @Override
     public void onDisable() {
-        // Сохраняем конфигурацию при выключении плагина
+        AuthManager.shutdownSessions();
         AuthManager.saveConfigs();
-        System.out.println("[TelegramAuth] Plugin has been disabled");
+        if (bot != null) {
+            bot.onClosing();
+            bot = null;
+        }
+        instance = null;
+        getLogger().info("Plugin has been disabled");
+    }
+
+    public String getServerIp() {
+        return getConfig().getString("server-ip", "changeme");
+    }
+
+    public String getTelegramLink() {
+        return getConfig().getString("telegram-link", "changeme");
+    }
+
+    public String getRulesUrl() {
+        return getConfig().getString("rules-url", "changeme");
+    }
+
+    public int getMinPasswordLength() {
+        return Math.max(1, getConfig().getInt("min-password-length", 6));
+    }
+
+    public int getLoginTimeoutSeconds() {
+        return Math.max(10, getConfig().getInt("login-timeout-seconds", 60));
+    }
+
+    public int getMaxLoginAttempts() {
+        return Math.max(1, getConfig().getInt("max-login-attempts", 5));
+    }
+
+    public boolean skipPasswordOnSameIp() {
+        return getConfig().getBoolean("skip-password-on-same-ip", true);
+    }
+
+    public boolean isTelegramAdmin(long chatId) {
+        List<Long> adminIds = getConfig().getLongList("admin-telegram-ids");
+        return adminIds.contains(chatId);
     }
 }

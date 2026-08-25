@@ -7,61 +7,62 @@
 
 package ru.humoridze.telegramAuth;
 
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.entity.Player;
-
-import ru.humoridze.telegramAuth.AuthManager;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BotTelegram extends TelegramLongPollingBot {
-    private String username = "changeme";
-    private String token = "changeme";
-    private static Map<String, String> nextStep = new HashMap<>();
-    private static Map<String, String> playerUsername = new HashMap<>();
-    private Map<String, String> sendMessageData = new HashMap<>();
-    public static Map<String, String> curentplayer = new HashMap<>();
-    private final java.util.Set<Integer> processedKicks = new java.util.HashSet<>();
+    private static final String NICKNAME_PATTERN = "^[A-Za-z0-9_]{3,16}$";
 
+    private final String username;
+    private final String token;
+    private static final Map<String, String> nextStep = new ConcurrentHashMap<>();
+    private static final Map<String, String> playerUsername = new ConcurrentHashMap<>();
+    public static final Map<String, String> curentplayer = new ConcurrentHashMap<>();
+    private final java.util.Set<Integer> processedKicks = ConcurrentHashMap.newKeySet();
+    private final Map<String, Integer> nicknameRequestMessages = new ConcurrentHashMap<>();
+    private final Map<String, Integer> passwordRequestMessages = new ConcurrentHashMap<>();
+
+    public BotTelegram(String username, String token) {
+        this.username = username;
+        this.token = token;
+    }
 
     public BotTelegram() {
+        String loadedUsername = "changeme";
+        String loadedToken = "changeme";
         YamlConfiguration config = new YamlConfiguration();
-        File file = new File("plugins/telegramAuth/config.yml");
+        java.io.File file = new java.io.File("plugins/telegramAuth/config.yml");
         file.getParentFile().mkdirs();
-
-        if (!file.exists()) {
-            config.set("username", username);
-            config.set("token", token);
-            try {
-                config.save(file);
-            } catch (Exception e) {
-                System.out.println("Error creating config file: " + e);
-            }
-        } else {
+        if (file.exists()) {
             try {
                 config.load(file);
-            } catch (IOException e) {
-                System.out.println("Error loading config file: " + e);
-            } catch (InvalidConfigurationException e) {
+                if (config.getString("username") != null) {
+                    loadedUsername = config.getString("username");
+                }
+                if (config.getString("token") != null) {
+                    loadedToken = config.getString("token");
+                }
+            } catch (java.io.IOException | InvalidConfigurationException e) {
                 System.out.println("Error loading config file: " + e);
             }
-            username = config.getString("username");
-            token = config.getString("token");
         }
+        this.username = loadedUsername;
+        this.token = loadedToken;
     }
 
     @Override
@@ -76,144 +77,176 @@ public class BotTelegram extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        if (update.hasMessage()) {
-            if (update.getMessage().getText().toString().startsWith("#")){
-                User user = User.getCurrentUser(update.getMessage().getChatId());
-                String message = update.getMessage().getText().toString().replace("#", "");
-                if (user == null){
-                    this.sendMessage(update.getMessage().getChatId(), "Привяжите телеграм к аккаунту");
-                }else {
-                    if (user.player != null){
-                        Handler.sendMCmessage(user.playername, message);
-                    }else{
-                        if (user.chatid != null && TelegramAuth.bot != null) {
-                            TelegramAuth.bot.sendMessage(user.chatid, "Ваш аккаунт не в игре");
-                        }
-                    }
+        if (update.hasCallbackQuery()) {
+            handleCallback(update.getCallbackQuery());
+            return;
+        }
+        if (!update.hasMessage() || !update.getMessage().hasText()) {
+            return;
+        }
+        Message message = update.getMessage();
+        String text = message.getText();
+        Long chatId = message.getChatId();
 
-
-                }
-                this.deleteMessage(update.getMessage());
+        if (text.startsWith("#")) {
+            User user = User.getCurrentUser(chatId);
+            String gameMessage = text.substring(1);
+            if (user == null) {
+                sendMessage(chatId, "Привяжите телеграм к аккаунту");
+            } else if (user.player != null) {
+                Handler.sendMCmessage(user.playername, gameMessage);
+            } else {
+                sendMessage(chatId, "Ваш аккаунт не в игре");
             }
-            if (update.getMessage().getText().toString().startsWith("/")) {
-                if (update.getMessage().getText().toString().equals("/start")) {
-                    sendWelcomeMessage(update.getMessage().getChatId());
-                }
-                if (update.getMessage().getText().toString().equals("/kick")) {
-                    User user = User.getOnlineUser(update.getMessage().getChatId());
-                    if (user != null) {
-                        user.kick();
-                        if (user.chatid != null && TelegramAuth.bot != null) {
-                            TelegramAuth.bot.sendMessage(user.chatid, "Вы успешно кикнули себя с сервера");
-                        }
-                    } else this.sendMessage(update.getMessage().getChatId(), "Ваш аккаунт не в игре");
-                }
-                this.deleteMessage(update.getMessage());
+            deleteMessage(message);
+            return;
+        }
 
+        if (text.startsWith("/")) {
+            String command = text.split(" ")[0].toLowerCase();
+            int at = command.indexOf('@');
+            if (at > 0) {
+                command = command.substring(0, at);
             }
-            else {
-                if (nextStep.containsKey(update.getMessage().getChatId().toString())) {
-                    String currentStep = nextStep.get(update.getMessage().getChatId().toString());
-
-                    if (currentStep != null && currentStep.equals("asknickname")) {
-                        handleNicknameInput(update.getMessage());
-                    }
-                    if (currentStep != null && currentStep.equals("askpassword")) {
-                        handlePasswordInput(update.getMessage());
-                    }
-                    if(currentStep != null && currentStep.equals("none")) {
-                        nextStep.remove(update.getMessage().getChatId().toString());
-                    }
+            if (command.equals("/start")) {
+                sendWelcomeMessage(chatId);
+            } else if (command.equals("/kick")) {
+                User user = User.getOnlineUser(chatId);
+                if (user != null) {
+                    user.kick();
+                    sendMessage(chatId, "Вы успешно кикнули себя с сервера");
+                } else {
+                    sendMessage(chatId, "Ваш аккаунт не в игре");
                 }
+            } else if (command.equals("/whitelist")) {
+                if (TelegramAuth.getInstance() != null && TelegramAuth.getInstance().isTelegramAdmin(chatId)) {
+                    handleWhitelistCommand(message);
+                } else {
+                    sendMessage(chatId, "Недостаточно прав.");
+                }
+            }
+            deleteMessage(message);
+            return;
+        }
 
+        String currentStep = nextStep.get(chatId.toString());
+        if (currentStep == null) {
+            return;
+        }
+        if (currentStep.equals("asknickname")) {
+            handleNicknameInput(message);
+        } else if (currentStep.equals("askpassword")) {
+            handlePasswordInput(message);
+        } else if (currentStep.equals("none")) {
+            nextStep.remove(chatId.toString());
+        }
+    }
+
+    private void handleCallback(CallbackQuery callback) {
+        answerCallback(callback.getId());
+        String data = callback.getData();
+        if (data == null || callback.getMessage() == null) {
+            return;
+        }
+        Long chatId = callback.getMessage().getChatId();
+        Integer messageId = callback.getMessage().getMessageId();
+
+        if (data.equals("continue_registration")) {
+            sendNicknameRequest(chatId);
+            deleteMessage(callback.getMessage());
+            return;
+        }
+
+        if (data.startsWith("acc:") || data.startsWith("acc")) {
+            String playername = data.startsWith("acc:") ? data.substring(4) : data.substring(3);
+            curentplayer.put(chatId.toString(), playername);
+            sendMessage(chatId, "Выбран игрок " + playername);
+            return;
+        }
+
+        String yesUsername = callbackUsername(data, "yes:", "ys");
+        if (yesUsername != null) {
+            AuthManager.confirmLogin(yesUsername);
+            deleteMessage(callback.getMessage());
+            return;
+        }
+
+        String denyUsername = callbackUsername(data, "notme:", "notme");
+        if (denyUsername == null) {
+            if (data.startsWith("no:") || (data.startsWith("no") && !data.startsWith("notme"))) {
+                denyUsername = data.startsWith("no:") ? data.substring(3) : data.substring(2);
             }
         }
-        if (update.hasCallbackQuery()) {
-            Integer callbackMsgId = update.getCallbackQuery().getMessage().getMessageId();
-            // processedKicks теперь используется только для notme/no, а не для ys
-            if (update.getCallbackQuery().getData().toString().startsWith("ys")) {
-                String playername = update.getCallbackQuery().getData().toString().replace("ys", "");
-                AuthManager.confirmLogin(playername);
-                this.deleteMessage(update.getCallbackQuery().getMessage());
-                // Получаем IP игрока
-                String ip = AuthManager.getLastIp(playername);
-                Long chatId = update.getCallbackQuery().getMessage().getChatId();
-                String time = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss").format(java.time.LocalDateTime.now());
-                org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup markup = new org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup();
-                java.util.List<org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton> row = new java.util.ArrayList<>();
-                org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton btn = new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton();
-                btn.setText("❌ Это был не я");
-                btn.setCallbackData("notme" + playername);
-                row.add(btn);
-                java.util.List<java.util.List<org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton>> keyboard = new java.util.ArrayList<>();
-                keyboard.add(row);
-                markup.setKeyboard(keyboard);
-                org.telegram.telegrambots.meta.api.methods.send.SendMessage msg = new org.telegram.telegrambots.meta.api.methods.send.SendMessage();
-                msg.setChatId(chatId);
-                String spoilerIp = ip != null ? "<tg-spoiler>" + escapeHtml(ip) + "</tg-spoiler>" : "";
-                msg.setText("✅ Успешный вход\n" + "🕒 Время входа: " + time + (ip != null ? "\n🌐 IP: " + spoilerIp : ""));
-                msg.setReplyMarkup(markup);
-                msg.enableHtml(true);
-                try {
-                    this.execute(msg);
-                } catch (TelegramApiException e) {
-                    System.out.println("Error sending success message: " + e);
-                }
+        if (denyUsername != null) {
+            if (!processedKicks.add(messageId)) {
+                return;
             }
-            // Обработка кнопок "Это был не я" и "Нет" — только одно сообщение о кике
-            if (update.getCallbackQuery().getData().toString().startsWith("notme") || update.getCallbackQuery().getData().toString().startsWith("no")) {
-                String playername;
-                if (update.getCallbackQuery().getData().toString().startsWith("notme")) {
-                    playername = update.getCallbackQuery().getData().toString().replace("notme", "");
-                } else {
-                    playername = update.getCallbackQuery().getData().toString().replace("no", "");
-                }
-                Long chatId = update.getCallbackQuery().getMessage().getChatId();
-                
-                // Проверяем, не отправляли ли уже сообщение о кике для этого сообщения
-                synchronized (processedKicks) {
-                    if (processedKicks.contains(update.getCallbackQuery().getMessage().getMessageId())) {
-                        return; // Уже обработано
-                    }
-                    processedKicks.add(update.getCallbackQuery().getMessage().getMessageId());
-                }
-                
-                // Проверяем, это сообщение о смене пароля или о входе
-                String messageText = update.getCallbackQuery().getMessage().getText();
-                if (messageText != null && messageText.contains("Ваш пароль был изменен в игре")) {
-                    // Это сообщение о смене пароля - кикаем игрока и генерируем новый пароль
-                    String newPassword = AuthManager.kickAndChangePassword(playername);
-                    if (newPassword != null) {
-                        String spoilerPassword = "<tg-spoiler>" + escapeHtml(newPassword) + "</tg-spoiler>";
-                        SendMessage passwordMessage = new SendMessage();
-                        passwordMessage.setChatId(chatId);
-                        passwordMessage.setText("🔐 Новый пароль: " + spoilerPassword + "\n" +
-                                              "Используйте его для входа в игру.");
-                        passwordMessage.enableHtml(true);
-                        try {
-                            execute(passwordMessage);
-                        } catch (TelegramApiException e) {
-                            System.out.println("Error sending new password message: " + e);
-                        }
-                    } else {
-                        this.sendMessage(chatId, "❌ Ошибка при генерации нового пароля.");
+            String messageText = callback.getMessage().getText();
+            if (messageText != null && messageText.contains("Ваш пароль был изменен в игре")) {
+                String newPassword = AuthManager.kickAndChangePassword(denyUsername);
+                if (newPassword != null) {
+                    SendMessage passwordMessage = new SendMessage();
+                    passwordMessage.setChatId(chatId);
+                    passwordMessage.setText("🔐 Новый пароль: <tg-spoiler>" + escapeHtml(newPassword) + "</tg-spoiler>\n"
+                            + "Используйте его для входа в игру.");
+                    passwordMessage.enableHtml(true);
+                    try {
+                        execute(passwordMessage);
+                    } catch (TelegramApiException e) {
+                        System.out.println("Error sending new password message: " + e);
                     }
                 } else {
-                    // Это сообщение о входе - кикаем игрока
-                    this.deleteMessage(update.getCallbackQuery().getMessage());
-                    sendKickedMessage(playername, chatId);
+                    sendMessage(chatId, "❌ Ошибка при генерации нового пароля.");
                 }
+            } else {
+                deleteMessage(callback.getMessage());
+                sendKickedMessage(denyUsername, chatId);
             }
-            if (update.getCallbackQuery().getData().toString().equals("continue_registration")) {
-                sendNicknameRequest(update.getCallbackQuery().getMessage().getChatId());
-                this.deleteMessage(update.getCallbackQuery().getMessage());
-            }
-            if (update.getCallbackQuery().getData().toString().startsWith("acc")) {
-                String playername = update.getCallbackQuery().getData().toString().replace("acc", "");
-                curentplayer.put(update.getCallbackQuery().getMessage().getChatId().toString(), playername);
-                this.sendMessage(update.getCallbackQuery().getMessage().getChatId(), "Выбран игрок " + playername);
-            }
-            // Убираем обработку кнопки show_password_ так как кнопка больше не нужна
+        }
+    }
+
+    private String callbackUsername(String data, String delimitedPrefix, String legacyPrefix) {
+        if (data.startsWith(delimitedPrefix)) {
+            return data.substring(delimitedPrefix.length());
+        }
+        if (data.startsWith(legacyPrefix)) {
+            return data.substring(legacyPrefix.length());
+        }
+        return null;
+    }
+
+    public void sendSuccessLogin(Long chatId, String playername, String ip) {
+        String time = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")
+                .format(java.time.LocalDateTime.now());
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        InlineKeyboardButton denyButton = new InlineKeyboardButton();
+        denyButton.setText("❌ Это был не я");
+        denyButton.setCallbackData("notme:" + playername);
+        row.add(denyButton);
+        List<List<InlineKeyboardButton>> keyboard = new ArrayList<>();
+        keyboard.add(row);
+        markup.setKeyboard(keyboard);
+
+        SendMessage msg = new SendMessage();
+        msg.setChatId(chatId);
+        String spoilerIp = ip != null ? "<tg-spoiler>" + escapeHtml(ip) + "</tg-spoiler>" : "";
+        msg.setText("✅ Успешный вход\n" + "🕒 Время входа: " + time + (ip != null ? "\n🌐 IP: " + spoilerIp : ""));
+        msg.setReplyMarkup(markup);
+        msg.enableHtml(true);
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            System.out.println("Error sending success message: " + e);
+        }
+    }
+
+    private void answerCallback(String callbackId) {
+        AnswerCallbackQuery answer = new AnswerCallbackQuery();
+        answer.setCallbackQueryId(callbackId);
+        try {
+            execute(answer);
+        } catch (TelegramApiException ignored) {
         }
     }
 
@@ -221,7 +254,7 @@ public class BotTelegram extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(Chatid);
         sendMessage.setText(message);
-        sendMessage.enableHtml(true); // Включаем поддержку HTML форматирования
+        sendMessage.enableHtml(true);
         try {
             execute(sendMessage);
         } catch (TelegramApiException e) {
@@ -243,23 +276,22 @@ public class BotTelegram extends TelegramLongPollingBot {
     public void sendPasswordChangeNotification(Long chatId, String username) {
         InlineKeyboardMarkup keyboard = new InlineKeyboardMarkup();
         List<InlineKeyboardButton> row = new ArrayList<>();
-        
+
         InlineKeyboardButton changePasswordBtn = new InlineKeyboardButton();
         changePasswordBtn.setText("🔐 Сменить пароль");
-        changePasswordBtn.setCallbackData("notme" + username);
-        
+        changePasswordBtn.setCallbackData("notme:" + username);
         row.add(changePasswordBtn);
-        
+
         List<List<InlineKeyboardButton>> keyboardList = new ArrayList<>();
         keyboardList.add(row);
         keyboard.setKeyboard(keyboardList);
-        
+
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText("🔐 Ваш пароль был изменен в игре.\n" +
-                      "Если это были не вы, немедленно смените пароль!");
+                "Если это были не вы, немедленно смените пароль!");
         message.setReplyMarkup(keyboard);
-        
+
         try {
             execute(message);
         } catch (TelegramApiException e) {
@@ -275,17 +307,12 @@ public class BotTelegram extends TelegramLongPollingBot {
                 .replace("'", "&#39;");
     }
 
-    private String dispPlayer(Long chatId){
-        User user = User.getUser(curentplayer.get(chatId.toString()));
-        return user.player.getName();
-    }
-
     private void handleWhitelistCommand(Message message) {
         Long chatId = message.getChatId();
         String[] args = message.getText().split(" ");
 
         if (args.length < 2) {
-            this.sendMessage(chatId, "Использование: /whitelist <add/remove/list> [игрок]");
+            sendMessage(chatId, "Использование: /whitelist <add/remove/list> [игрок]");
             return;
         }
 
@@ -294,82 +321,70 @@ public class BotTelegram extends TelegramLongPollingBot {
         switch (action) {
             case "add":
                 if (args.length < 3) {
-                    this.sendMessage(chatId, "Использование: /whitelist add <игрок>");
+                    sendMessage(chatId, "Использование: /whitelist add <игрок>");
                     return;
                 }
                 handleWhitelistAdd(chatId, args[2]);
                 break;
-
             case "remove":
                 if (args.length < 3) {
-                    this.sendMessage(chatId, "Использование: /whitelist remove <игрок>");
+                    sendMessage(chatId, "Использование: /whitelist remove <игрок>");
                     return;
                 }
                 handleWhitelistRemove(chatId, args[2]);
                 break;
-
             case "list":
                 handleWhitelistList(chatId);
                 break;
-
             default:
-                this.sendMessage(chatId, "Неизвестная команда. Используйте: add, remove, list");
+                sendMessage(chatId, "Неизвестная команда. Используйте: add, remove, list");
                 break;
         }
     }
 
     private void handleWhitelistAdd(Long chatId, String username) {
         if (!AuthManager.isUserRegistered(username)) {
-            this.sendMessage(chatId, "Игрок " + username + " не зарегистрирован!");
+            sendMessage(chatId, "Игрок " + username + " не зарегистрирован!");
             return;
         }
-
         if (AuthManager.isUserWhitelisted(username)) {
-            this.sendMessage(chatId, "Игрок " + username + " уже в вайтлисте!");
+            sendMessage(chatId, "Игрок " + username + " уже в вайтлисте!");
             return;
         }
-
         if (AuthManager.addToWhitelist(username)) {
-            this.sendMessage(chatId, "Игрок " + username + " добавлен в вайтлист!");
+            sendMessage(chatId, "Игрок " + username + " добавлен в вайтлист!");
         } else {
-            this.sendMessage(chatId, "Ошибка добавления игрока " + username + " в вайтлист!");
+            sendMessage(chatId, "Ошибка добавления игрока " + username + " в вайтлист!");
         }
     }
 
     private void handleWhitelistRemove(Long chatId, String username) {
         if (!AuthManager.isUserWhitelisted(username)) {
-            this.sendMessage(chatId, "Игрок " + username + " не в вайтлисте!");
+            sendMessage(chatId, "Игрок " + username + " не в вайтлисте!");
             return;
         }
-
         if (AuthManager.removeFromWhitelist(username)) {
-            this.sendMessage(chatId, "Игрок " + username + " удален из вайтлиста!");
+            sendMessage(chatId, "Игрок " + username + " удален из вайтлиста!");
         } else {
-            this.sendMessage(chatId, "Ошибка удаления игрока " + username + " из вайтлиста!");
+            sendMessage(chatId, "Ошибка удаления игрока " + username + " из вайтлиста!");
         }
     }
 
     private void handleWhitelistList(Long chatId) {
         List<String> whitelistedUsers = AuthManager.getWhitelistedUsers();
-
         if (whitelistedUsers.isEmpty()) {
-            this.sendMessage(chatId, "Вайтлист пуст.");
+            sendMessage(chatId, "Вайтлист пуст.");
             return;
         }
-
         StringBuilder message = new StringBuilder("Игроки в вайтлисте:\n");
-        for (String username : whitelistedUsers) {
-            message.append("✅ ").append(username).append("\n");
+        for (String nickname : whitelistedUsers) {
+            message.append("✅ ").append(nickname).append("\n");
         }
-
-        this.sendMessage(chatId, message.toString());
+        sendMessage(chatId, message.toString());
     }
 
-    // Новые методы для обновленного диалога регистрации
     private void sendWelcomeMessage(Long chatId) {
-        // Проверяем, есть ли уже зарегистрированный аккаунт для этого Telegram
         String existingUsername = null;
-
         for (String registeredUser : AuthManager.getRegisteredUsers()) {
             Long registeredChatId = AuthManager.getTelegramChatId(registeredUser);
             if (registeredChatId != null && registeredChatId.equals(chatId)) {
@@ -378,20 +393,19 @@ public class BotTelegram extends TelegramLongPollingBot {
             }
         }
 
-        if (existingUsername != null) {
-            // Получаем пароль для показа в спойлере
-            String password = AuthManager.getUserPasswordForDisplay(existingUsername);
+        String serverIp = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getServerIp()
+                : "changeme";
 
-            // Показываем информацию о существующем аккаунте со спойлером
+        if (existingUsername != null) {
             SendMessage message = new SendMessage();
             message.setChatId(chatId);
             message.setText("📋 <b>Информация:</b>\n" +
                     "👤 <b>Игрок:</b> " + escapeHtml(existingUsername) + "\n" +
                     "✅ <b>Статус:</b> Добавлен в вайтлист\n\n" +
-                    "🌐 <b>Наш IP:</b> minecraft.webcodewizard.ru:25565\n" +
+                    "🌐 <b>Наш IP:</b> " + escapeHtml(serverIp) + "\n" +
                     "🎮 Приятной игры!");
             message.enableHtml(true);
-
             try {
                 execute(message);
             } catch (TelegramApiException e) {
@@ -400,24 +414,20 @@ public class BotTelegram extends TelegramLongPollingBot {
             return;
         }
 
-        // Если аккаунта нет, показываем форму регистрации
         InlineKeyboardMarkup keyboard = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> keyboardList = new ArrayList<>();
         List<InlineKeyboardButton> row = new ArrayList<>();
-
         InlineKeyboardButton continueButton = new InlineKeyboardButton();
         continueButton.setText("Продолжить");
         continueButton.setCallbackData("continue_registration");
         row.add(continueButton);
         keyboardList.add(row);
-
         keyboard.setKeyboard(keyboardList);
 
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText("🎮 Здравствуйте! Для входа на сервер вы должны зарегистрироваться в боте!");
         message.setReplyMarkup(keyboard);
-
         try {
             execute(message);
         } catch (TelegramApiException e) {
@@ -425,20 +435,13 @@ public class BotTelegram extends TelegramLongPollingBot {
         }
     }
 
-    // Для хранения ID сообщений, которые нужно удалить
-    private Map<String, Integer> nicknameRequestMessages = new HashMap<>();
-    private Map<String, Integer> passwordRequestMessages = new HashMap<>();
-
     private void sendNicknameRequest(Long chatId) {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText("👤 Введите ваш никнейм:");
-
         try {
             Message sentMessage = execute(message);
-            // Сохраняем ID сообщения для удаления после получения ответа
             nicknameRequestMessages.put(chatId.toString(), sentMessage.getMessageId());
-
             nextStep.put(chatId.toString(), "asknickname");
         } catch (TelegramApiException e) {
             System.out.println("Error sending nickname request: " + e);
@@ -446,10 +449,9 @@ public class BotTelegram extends TelegramLongPollingBot {
     }
 
     private void handleNicknameInput(Message message) {
-        String username = message.getText().toString();
+        String nickname = message.getText().trim();
         Long chatId = message.getChatId();
 
-        // Удаляем сообщение с запросом никнейма после получения ответа
         Integer nicknameRequestMessageId = nicknameRequestMessages.remove(chatId.toString());
         if (nicknameRequestMessageId != null) {
             try {
@@ -462,49 +464,50 @@ public class BotTelegram extends TelegramLongPollingBot {
             }
         }
 
-        // Проверяем, не зарегистрирован ли уже пользователь
-        if (AuthManager.isUserRegistered(username)) {
-            this.sendMessage(chatId, "❌ Игрок " + username + " уже зарегистрирован!");
-            nextStep.remove(chatId.toString());
-            this.deleteMessage(message);
+        if (!nickname.matches(NICKNAME_PATTERN)) {
+            sendMessage(chatId, "❌ Никнейм должен быть 3–16 символов: латиница, цифры и _");
+            sendNicknameRequest(chatId);
+            deleteMessage(message);
             return;
         }
 
-        // Проверяем, не привязан ли уже этот Telegram к другому аккаунту
+        if (AuthManager.isUserRegistered(nickname)) {
+            sendMessage(chatId, "❌ Игрок " + nickname + " уже зарегистрирован!");
+            nextStep.remove(chatId.toString());
+            deleteMessage(message);
+            return;
+        }
+
         for (String registeredUser : AuthManager.getRegisteredUsers()) {
             Long registeredChatId = AuthManager.getTelegramChatId(registeredUser);
             if (registeredChatId != null && registeredChatId.equals(chatId)) {
-                this.sendMessage(chatId, "❌ Этот Telegram уже привязан к игроку " + registeredUser);
+                sendMessage(chatId, "❌ Этот Telegram уже привязан к игроку " + registeredUser);
                 nextStep.remove(chatId.toString());
-                this.deleteMessage(message);
+                deleteMessage(message);
                 return;
             }
         }
 
-        // Сохраняем никнейм и запрашиваем пароль
-        playerUsername.put(chatId.toString(), username);
+        playerUsername.put(chatId.toString(), nickname);
 
         SendMessage passwordMessage = new SendMessage();
         passwordMessage.setChatId(chatId);
         passwordMessage.setText("🔐 Придумайте пароль:\n\n⚠️ Пароль будет скрыт после ввода");
-
         try {
             Message sentPasswordMessage = execute(passwordMessage);
-            // Сохраняем ID сообщения для удаления после получения ответа
             passwordRequestMessages.put(chatId.toString(), sentPasswordMessage.getMessageId());
         } catch (TelegramApiException e) {
             System.out.println("Error sending password request: " + e);
         }
 
         nextStep.put(chatId.toString(), "askpassword");
-        this.deleteMessage(message);
+        deleteMessage(message);
     }
 
     private void handlePasswordInput(Message message) {
-        String password = message.getText().toString().replace(" ", "").replace("\n", "");
+        String password = message.getText().replace(" ", "").replace("\n", "");
         Long chatId = message.getChatId();
 
-        // Удаляем сообщение с запросом пароля после получения ответа
         Integer passwordRequestMessageId = passwordRequestMessages.remove(chatId.toString());
         if (passwordRequestMessageId != null) {
             try {
@@ -517,62 +520,67 @@ public class BotTelegram extends TelegramLongPollingBot {
             }
         }
 
-        // Проверяем длину пароля
-        if (password.length() < 6) {
-            this.sendMessage(chatId, "❌ Пароль должен содержать минимум 6 символов. Попробуйте еще раз:");
-            this.deleteMessage(message);
+        int minLength = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getMinPasswordLength()
+                : 6;
+        if (password.length() < minLength) {
+            sendMessage(chatId, "❌ Пароль должен содержать минимум " + minLength + " символов. Попробуйте еще раз:");
+            deleteMessage(message);
             return;
         }
 
-        String username = playerUsername.get(chatId.toString());
-        if (username == null) {
-            this.sendMessage(chatId, "❌ Ошибка: не найден никнейм игрока. Начните регистрацию заново с команды /start");
+        String nickname = playerUsername.get(chatId.toString());
+        if (nickname == null) {
+            sendMessage(chatId, "❌ Ошибка: не найден никнейм игрока. Начните регистрацию заново с команды /start");
             nextStep.remove(chatId.toString());
-            this.deleteMessage(message);
+            deleteMessage(message);
             return;
         }
 
-        // Регистрируем пользователя и добавляем в вайтлист
-        if (AuthManager.registerUser(username, password, chatId)) {
-            AuthManager.addToWhitelist(username);
+        String serverIp = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getServerIp()
+                : "changeme";
 
+        if (AuthManager.registerUser(nickname, password, chatId)) {
+            AuthManager.addToWhitelist(nickname);
             SendMessage successMessage = new SendMessage();
             successMessage.setChatId(chatId);
             successMessage.setText("🎉 <b>Отлично! Вы успешно зарегистрированы и можете зайти на сервер.</b>\n\n" +
                     "📋 <b>Информация:</b>\n" +
-                    "👤 <b>Игрок:</b> " + escapeHtml(username) + "\n" +
+                    "👤 <b>Игрок:</b> " + escapeHtml(nickname) + "\n" +
                     "🔐 <b>Пароль:</b> <tg-spoiler>" + escapeHtml(password) + "</tg-spoiler>\n" +
                     "✅ <b>Статус:</b> Добавлен в вайтлист\n\n" +
-                    "🌐 <b>Наш IP:</b> minecraft.webcodewizard.ru:25565\n" +
+                    "🌐 <b>Наш IP:</b> " + escapeHtml(serverIp) + "\n" +
                     "🎮 Приятной игры!");
             successMessage.enableHtml(true);
-
             try {
                 execute(successMessage);
             } catch (TelegramApiException e) {
                 System.out.println("Error sending registration success: " + e);
             }
         } else {
-            this.sendMessage(chatId, "❌ Ошибка регистрации. Попробуйте еще раз.");
+            sendMessage(chatId, "❌ Ошибка регистрации. Попробуйте еще раз.");
         }
 
-        // Очищаем данные
         nextStep.remove(chatId.toString());
         playerUsername.remove(chatId.toString());
-        this.deleteMessage(message);
+        deleteMessage(message);
     }
 
     private void sendKickedMessage(String playername, Long chatId) {
         String newPassword = AuthManager.kickAndChangePassword(playername);
+        if (newPassword == null) {
+            sendMessage(chatId, "❌ Не удалось сменить пароль.");
+            return;
+        }
         String spoiler = "<tg-spoiler>" + escapeHtml(newPassword) + "</tg-spoiler>";
-        String text = "❌ Ваш аккаунт был кикнут с сервера\n🔑 Пароль сменен на " + spoiler;
-        org.telegram.telegrambots.meta.api.methods.send.SendMessage msg = new org.telegram.telegrambots.meta.api.methods.send.SendMessage();
+        SendMessage msg = new SendMessage();
         msg.setChatId(chatId);
-        msg.setText(text);
+        msg.setText("❌ Ваш аккаунт был кикнут с сервера\n🔑 Пароль сменен на " + spoiler);
         msg.enableHtml(true);
         try {
-            this.execute(msg);
-        } catch (org.telegram.telegrambots.meta.exceptions.TelegramApiException e) {
+            execute(msg);
+        } catch (TelegramApiException e) {
             System.out.println("Error sending kicked message: " + e);
         }
     }

@@ -9,11 +9,13 @@ package ru.humoridze.telegramAuth;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitTask;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
@@ -23,206 +25,237 @@ import ru.humoridze.telegramAuth.events.MuterEvent;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class AuthManager {
-    private static final String AUTH_DATA_FILE = "plugins/telegramAuth/auth_data.yml";
-
+    private static final Object CONFIG_LOCK = new Object();
+    private static File authDataFile;
     private static YamlConfiguration authDataConfig;
-    private static Plugin pluginInstance; // Добавляем поле для хранения экземпляра плагина
+    private static Plugin pluginInstance;
 
-    // Кэш для максимальной производительности
     private static final ConcurrentHashMap<String, Boolean> registrationCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> whitelistCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Long> chatIdCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> authStatusCache = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, String> tempPasswordCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> pendingTelegramCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> lastIpCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Integer> loginAttempts = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, BukkitTask> loginTimeouts = new ConcurrentHashMap<>();
 
-    // Флаг для отслеживания изменений
     private static volatile boolean configChanged = false;
 
-    static {
+    public static void initialize(Plugin plugin) {
+        pluginInstance = plugin;
         loadConfigs();
     }
 
-    // Метод для инициализации плагина
-    public static void initialize(Plugin plugin) {
-        pluginInstance = plugin;
+    private static String cacheKey(String username) {
+        return username.toLowerCase(Locale.ROOT);
     }
 
     private static void loadConfigs() {
-        File authDataFile = new File(AUTH_DATA_FILE);
+        authDataFile = new File(pluginInstance.getDataFolder(), "auth_data.yml");
         authDataFile.getParentFile().mkdirs();
-
         authDataConfig = new YamlConfiguration();
         if (authDataFile.exists()) {
             try {
                 authDataConfig.load(authDataFile);
             } catch (IOException | InvalidConfigurationException e) {
-                System.out.println("Ошибка загрузки данных авторизации: " + e.getMessage());
+                pluginInstance.getLogger().severe("Ошибка загрузки данных авторизации: " + e.getMessage());
+            }
+        }
+        warmCaches();
+    }
+
+    private static void warmCaches() {
+        ConfigurationSection usersSection;
+        synchronized (CONFIG_LOCK) {
+            usersSection = authDataConfig.getConfigurationSection("users");
+        }
+        if (usersSection == null) {
+            return;
+        }
+        for (String userKey : usersSection.getKeys(false)) {
+            String username;
+            boolean registered;
+            boolean whitelisted;
+            long chatId;
+            String lastIp;
+            synchronized (CONFIG_LOCK) {
+                username = authDataConfig.getString("users." + userKey + ".username");
+                registered = authDataConfig.getBoolean("users." + userKey + ".registered", false);
+                whitelisted = authDataConfig.getBoolean("users." + userKey + ".whitelisted", false);
+                chatId = authDataConfig.getLong("users." + userKey + ".telegram_chat_id", 0);
+                lastIp = authDataConfig.getString("users." + userKey + ".last_ip");
+            }
+            if (username == null) {
+                continue;
+            }
+            String key = cacheKey(username);
+            registrationCache.put(key, registered);
+            whitelistCache.put(key, whitelisted);
+            chatIdCache.put(key, chatId);
+            if (lastIp != null) {
+                lastIpCache.put(key, lastIp);
             }
         }
     }
 
     public static void saveConfigs() {
-        if (!configChanged) {
+        if (!configChanged || authDataFile == null) {
             return;
         }
-
-        try {
-            authDataConfig.save(new File(AUTH_DATA_FILE));
-            configChanged = false;
-        } catch (IOException e) {
-            System.out.println("Ошибка сохранения конфигурации: " + e.getMessage());
+        synchronized (CONFIG_LOCK) {
+            if (!configChanged) {
+                return;
+            }
+            try {
+                authDataConfig.save(authDataFile);
+                configChanged = false;
+            } catch (IOException e) {
+                if (pluginInstance != null) {
+                    pluginInstance.getLogger().severe("Ошибка сохранения конфигурации: " + e.getMessage());
+                }
+            }
         }
     }
 
     public static boolean registerUser(String username, String password, Long telegramChatId) {
-        try {
-            if (isUserRegistered(username)) {
-                return false;
-            }
-
-            String hashedPassword = PasswordHasher.hashPassword(password);
-            String userKey = getUsernameHash(username);
-
+        if (isUserRegistered(username)) {
+            return false;
+        }
+        String hashedPassword = PasswordHasher.hashPassword(password);
+        String userKey = getUsernameHash(username);
+        String key = cacheKey(username);
+        synchronized (CONFIG_LOCK) {
             authDataConfig.set("users." + userKey + ".username", username);
             authDataConfig.set("users." + userKey + ".password", hashedPassword);
             authDataConfig.set("users." + userKey + ".telegram_chat_id", telegramChatId);
             authDataConfig.set("users." + userKey + ".registered", true);
             authDataConfig.set("users." + userKey + ".whitelisted", true);
-
-            registrationCache.put(username, true);
-            whitelistCache.put(username, true);
-            chatIdCache.put(username, telegramChatId);
-            tempPasswordCache.put(username, password);
-
             configChanged = true;
-            saveConfigs();
-            return true;
-        } catch (Exception e) {
-            System.out.println("Ошибка регистрации пользователя: " + e.getMessage());
-            return false;
         }
+        registrationCache.put(key, true);
+        whitelistCache.put(key, true);
+        chatIdCache.put(key, telegramChatId);
+        saveConfigs();
+        return true;
     }
 
     public static boolean addToWhitelist(String username) {
-        try {
-            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-            if (!offlinePlayer.isWhitelisted()) {
-                offlinePlayer.setWhitelisted(true);
-            }
-            String userKey = getUsernameHash(username);
+        String userKey = getUsernameHash(username);
+        synchronized (CONFIG_LOCK) {
             authDataConfig.set("users." + userKey + ".whitelisted", true);
             configChanged = true;
-            whitelistCache.put(username, true);
-            return true;
-        } catch (Exception e) {
-            System.out.println("Ошибка добавления в вайтлист: " + e.getMessage());
-            return false;
+        }
+        whitelistCache.put(cacheKey(username), true);
+        setBukkitWhitelist(username, true);
+        return true;
+    }
+
+    private static void setBukkitWhitelist(final String username, final boolean allowed) {
+        if (pluginInstance == null) {
+            return;
+        }
+        Runnable updateWhitelist = () -> {
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
+            if (offlinePlayer.isWhitelisted() != allowed) {
+                offlinePlayer.setWhitelisted(allowed);
+            }
+        };
+        if (Bukkit.isPrimaryThread()) {
+            updateWhitelist.run();
+        } else {
+            Bukkit.getScheduler().runTask(pluginInstance, updateWhitelist);
         }
     }
 
     public static boolean authenticateUser(String username, String password) {
-        try {
-            String userKey = getUsernameHash(username);
-            String storedPassword = authDataConfig.getString("users." + userKey + ".password");
-            if (storedPassword == null) {
-                return false;
-            }
-            return PasswordHasher.verifyPassword(password, storedPassword);
-        } catch (Exception e) {
-            System.out.println("Ошибка аутентификации: " + e.getMessage());
+        String userKey = getUsernameHash(username);
+        String storedPassword;
+        synchronized (CONFIG_LOCK) {
+            storedPassword = authDataConfig.getString("users." + userKey + ".password");
+        }
+        if (storedPassword == null) {
             return false;
         }
+        return PasswordHasher.verifyPassword(password, storedPassword);
     }
 
     public static boolean isUserRegistered(String username) {
-        Boolean cached = registrationCache.get(username);
+        String key = cacheKey(username);
+        Boolean cached = registrationCache.get(key);
         if (cached != null) {
             return cached;
         }
-        try {
-            String userKey = getUsernameHash(username);
-            boolean registered = authDataConfig.getBoolean("users." + userKey + ".registered", false);
-            registrationCache.put(username, registered);
-            return registered;
-        } catch (Exception e) {
-            registrationCache.put(username, false);
-            return false;
+        String userKey = getUsernameHash(username);
+        boolean registered;
+        synchronized (CONFIG_LOCK) {
+            registered = authDataConfig.getBoolean("users." + userKey + ".registered", false);
         }
+        registrationCache.put(key, registered);
+        return registered;
     }
 
     public static boolean isUserWhitelisted(String username) {
-        Boolean cached = whitelistCache.get(username);
+        String key = cacheKey(username);
+        Boolean cached = whitelistCache.get(key);
         if (cached != null) {
             return cached;
         }
-        try {
-            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-            boolean whitelisted = offlinePlayer.isWhitelisted();
-            whitelistCache.put(username, whitelisted);
-            return whitelisted;
-        } catch (Exception e) {
-            whitelistCache.put(username, false);
-            return false;
+        String userKey = getUsernameHash(username);
+        boolean whitelisted;
+        synchronized (CONFIG_LOCK) {
+            whitelisted = authDataConfig.getBoolean("users." + userKey + ".whitelisted", false);
         }
+        whitelistCache.put(key, whitelisted);
+        return whitelisted;
     }
 
     public static boolean isUserAuthenticated(String username) {
-        Boolean cached = authStatusCache.get(username);
+        String key = cacheKey(username);
+        Boolean cached = authStatusCache.get(key);
         if (cached != null) {
             return cached;
         }
-        Player player = Bukkit.getPlayer(username);
-        if (player != null) {
-            boolean authenticated = !FreezerEvent.isPlayerFrozen(username);
-            authStatusCache.put(username, authenticated);
-            return authenticated;
-        }
-        authStatusCache.put(username, false);
         return false;
     }
 
-    public static String getUserPasswordForDisplay(String username) {
-        String password = tempPasswordCache.get(username);
-        if (password != null) {
-            return password;
-        }
-        return "Пароль не найден";
+    public static boolean isPendingTelegramConfirm(String username) {
+        return Boolean.TRUE.equals(pendingTelegramCache.get(cacheKey(username)));
     }
 
     public static Long getTelegramChatId(String username) {
-        Long cached = chatIdCache.get(username);
+        String key = cacheKey(username);
+        Long cached = chatIdCache.get(key);
         if (cached != null) {
             return cached == 0 ? null : cached;
         }
-        try {
-            String userKey = getUsernameHash(username);
-            Long chatId = authDataConfig.getLong("users." + userKey + ".telegram_chat_id", 0);
-            chatIdCache.put(username, chatId);
-            return chatId == 0 ? null : chatId;
-        } catch (Exception e) {
-            chatIdCache.put(username, 0L);
-            return null;
+        String userKey = getUsernameHash(username);
+        long chatId;
+        synchronized (CONFIG_LOCK) {
+            chatId = authDataConfig.getLong("users." + userKey + ".telegram_chat_id", 0);
         }
+        chatIdCache.put(key, chatId);
+        return chatId == 0 ? null : chatId;
     }
 
-    // Новый метод для получения SHA-256 хеша от username
     public static String getUsernameHash(String username) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(username.toLowerCase().getBytes(StandardCharsets.UTF_8));
+            byte[] hash = digest.digest(username.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
             StringBuilder hexString = new StringBuilder();
             for (byte b : hash) {
                 String hex = Integer.toHexString(0xff & b);
-                if(hex.length() == 1) hexString.append('0');
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
                 hexString.append(hex);
             }
             return hexString.toString();
@@ -233,9 +266,11 @@ public class AuthManager {
 
     public static void handlePlayerJoin(Player player) {
         String username = player.getName();
+        TelegramAuth plugin = TelegramAuth.getInstance();
+        String telegramLink = plugin != null ? plugin.getTelegramLink() : "changeme";
         if (!isUserRegistered(username)) {
-            player.sendMessage(ChatColor.RED + "Вы не зарегистрированы! https://t.me/stonegladebot");
-            player.sendTitle(ChatColor.RED + "Не зарегистрированы!", "https://t.me/stonegladebot", 20, 10000000, 0);
+            player.sendMessage(ChatColor.RED + "Вы не зарегистрированы! " + telegramLink);
+            player.sendTitle(ChatColor.RED + "Не зарегистрированы!", telegramLink, 20, 10000000, 0);
             return;
         }
         if (!isUserWhitelisted(username)) {
@@ -243,29 +278,42 @@ public class AuthManager {
             player.sendTitle(ChatColor.RED + "Не в вайтлисте!", "Обратитесь к администратору", 20, 10000000, 0);
             return;
         }
+        beginAuthSession(player, ChatColor.YELLOW + "Введите пароль для входа: /login <пароль>",
+                ChatColor.YELLOW + "Требуется авторизация", "Введите пароль: /login <пароль>");
+    }
+
+    public static void beginAuthSession(Player player, String chatMessage, String title, String subtitle) {
+        String username = player.getName();
+        authStatusCache.put(cacheKey(username), false);
+        pendingTelegramCache.remove(cacheKey(username));
         FreezerEvent.freezeplayer(username);
-        MuterEvent.mute(username, ChatColor.YELLOW + "Введите пароль для входа: /login <пароль>");
-        player.sendMessage(ChatColor.YELLOW + "Введите пароль для входа: /login <пароль>");
-        player.sendTitle(ChatColor.YELLOW + "Требуется авторизация", "Введите пароль: /login <пароль>", 20, 10000000, 0);
+        MuterEvent.mute(username, chatMessage);
+        player.sendMessage(chatMessage);
+        player.sendTitle(title, subtitle, 20, 10000000, 0);
+        startLoginTimeout(username);
     }
 
     public static void handleSuccessfulAuth(Player player) {
         String username = player.getName();
         Long chatId = getTelegramChatId(username);
-        if (chatId != null && chatId != 0) {
-            sendLoginConfirmation(chatId, username);
-            player.sendMessage(ChatColor.YELLOW + "Подтвердите вход через Telegram");
-            player.sendTitle(ChatColor.YELLOW + "Подтвердите вход", "через Telegram", 20, 10000000, 0);
-        } else {
-            player.sendMessage(ChatColor.RED + "Ошибка: не найден Telegram Chat ID!");
-            player.sendTitle(ChatColor.RED + "Ошибка", "Не найден Telegram Chat ID", 20, 10000000, 0);
-            FreezerEvent.unfreezeplayer(username);
-            MuterEvent.unmute(username);
+        if (chatId == null || chatId == 0) {
+            player.kickPlayer(ChatColor.RED + "Ошибка: не найден Telegram Chat ID!");
+            return;
         }
+        if (!FreezerEvent.isPlayerFrozen(username)) {
+            FreezerEvent.freezeplayer(username);
+            startLoginTimeout(username);
+        }
+        pendingTelegramCache.put(cacheKey(username), true);
+        resetLoginAttempts(username);
+        sendLoginConfirmation(chatId, username);
+        player.sendMessage(ChatColor.YELLOW + "Подтвердите вход через Telegram");
+        player.sendTitle(ChatColor.YELLOW + "Подтвердите вход", "через Telegram", 20, 10000000, 0);
+        MuterEvent.mute(username, ChatColor.YELLOW + "Ожидается подтверждение через Telegram");
     }
 
-    private static void sendLoginConfirmation(Long chatId, String username) {
-        if (TelegramAuth.bot == null) {
+    private static void sendLoginConfirmation(final Long chatId, final String username) {
+        if (TelegramAuth.bot == null || pluginInstance == null) {
             return;
         }
 
@@ -274,11 +322,11 @@ public class AuthManager {
 
         InlineKeyboardButton yesBtn = new InlineKeyboardButton();
         yesBtn.setText("Да");
-        yesBtn.setCallbackData("ys" + username);
+        yesBtn.setCallbackData("yes:" + username);
 
         InlineKeyboardButton noBtn = new InlineKeyboardButton();
         noBtn.setText("Нет");
-        noBtn.setCallbackData("no" + username);
+        noBtn.setCallbackData("no:" + username);
 
         row.add(yesBtn);
         row.add(noBtn);
@@ -287,42 +335,136 @@ public class AuthManager {
         keyboardList.add(row);
         keyboard.setKeyboard(keyboardList);
 
-        SendMessage message = new SendMessage();
+        final SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText("\uD83D\uDD11 " + username + ", это вы пытаетесь войти на сервер?");
         message.setReplyMarkup(keyboard);
 
-        try {
-            TelegramAuth.bot.execute(message);
-        } catch (TelegramApiException e) {
-            System.out.println("Ошибка отправки сообщения: " + e.getMessage());
-        }
-    }
-
-    public static void confirmLogin(String username) {
-        if (pluginInstance == null) {
-            System.out.println("Ошибка: плагин не инициализирован!");
-            return;
-        }
-        Bukkit.getScheduler().runTask(pluginInstance, () -> {
-            Player player = Bukkit.getPlayer(username);
-            if (player != null) {
-                String ip = player.getAddress().getAddress().getHostAddress();
-                setLastIp(username, ip);
-                FreezerEvent.unfreezeplayer(username);
-                MuterEvent.unmute(username);
-                player.resetTitle();
-                player.sendMessage(ChatColor.GREEN + "Вход подтвержден! Добро пожаловать на сервер!");
-                player.sendMessage(ChatColor.YELLOW + "Перед началом игры рекомендуем ознакомиться с правилами: https://humoridze.github.io");
-                authStatusCache.put(username, true);
+        Bukkit.getScheduler().runTaskAsynchronously(pluginInstance, () -> {
+            try {
+                TelegramAuth.bot.execute(message);
+            } catch (TelegramApiException e) {
+                pluginInstance.getLogger().warning("Ошибка отправки сообщения: " + e.getMessage());
             }
         });
     }
 
+    public static void confirmLogin(String username) {
+        if (pluginInstance == null) {
+            return;
+        }
+        Bukkit.getScheduler().runTask(pluginInstance, () -> {
+            if (!Boolean.TRUE.equals(pendingTelegramCache.remove(cacheKey(username)))) {
+                return;
+            }
+            Player player = Bukkit.getPlayer(username);
+            if (player == null) {
+                return;
+            }
+            String currentIp = null;
+            if (player.getAddress() != null) {
+                currentIp = player.getAddress().getAddress().getHostAddress();
+                setLastIp(username, currentIp);
+            }
+            FreezerEvent.unfreezeplayer(username);
+            MuterEvent.unmute(username);
+            authStatusCache.put(cacheKey(username), true);
+            cancelLoginTimeout(username);
+            resetLoginAttempts(username);
+            player.resetTitle();
+            player.sendMessage(ChatColor.GREEN + "Вход подтвержден! Добро пожаловать на сервер!");
+            String rulesUrl = TelegramAuth.getInstance() != null
+                    ? TelegramAuth.getInstance().getRulesUrl()
+                    : "changeme";
+            player.sendMessage(ChatColor.YELLOW + "Перед началом игры рекомендуем ознакомиться с правилами: " + rulesUrl);
+            final Long chatId = getTelegramChatId(username);
+            final String confirmedIp = currentIp;
+            if (chatId != null && TelegramAuth.bot != null) {
+                Bukkit.getScheduler().runTaskAsynchronously(pluginInstance, () ->
+                        TelegramAuth.bot.sendSuccessLogin(chatId, username, confirmedIp));
+            }
+        });
+    }
+
+    public static void clearSession(String username) {
+        String key = cacheKey(username);
+        authStatusCache.remove(key);
+        pendingTelegramCache.remove(key);
+        loginAttempts.remove(key);
+        cancelLoginTimeout(username);
+        FreezerEvent.unfreezeplayer(username);
+        MuterEvent.unmute(username);
+    }
+
+    public static void startLoginTimeout(String username) {
+        cancelLoginTimeout(username);
+        if (pluginInstance == null) {
+            return;
+        }
+        int seconds = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getLoginTimeoutSeconds()
+                : 60;
+        BukkitTask timeoutTask = Bukkit.getScheduler().runTaskLater(pluginInstance, () -> {
+            Player player = Bukkit.getPlayer(username);
+            if (player != null && FreezerEvent.isPlayerFrozen(username)) {
+                player.kickPlayer(ChatColor.RED + "Время авторизации истекло");
+            }
+        }, seconds * 20L);
+        loginTimeouts.put(cacheKey(username), timeoutTask);
+    }
+
+    public static void cancelLoginTimeout(String username) {
+        BukkitTask timeoutTask = loginTimeouts.remove(cacheKey(username));
+        if (timeoutTask != null) {
+            timeoutTask.cancel();
+        }
+    }
+
+    public static void shutdownSessions() {
+        for (BukkitTask timeoutTask : loginTimeouts.values()) {
+            timeoutTask.cancel();
+        }
+        loginTimeouts.clear();
+        authStatusCache.clear();
+        pendingTelegramCache.clear();
+        loginAttempts.clear();
+    }
+
+    public static boolean registerFailedLogin(String username) {
+        String key = cacheKey(username);
+        int attempts = loginAttempts.getOrDefault(key, 0) + 1;
+        loginAttempts.put(key, attempts);
+        int maxAttempts = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getMaxLoginAttempts()
+                : 5;
+        if (attempts >= maxAttempts) {
+            Handler.kick(username, ChatColor.RED + "Слишком много неверных попыток входа");
+            return true;
+        }
+        return false;
+    }
+
+    public static void resetLoginAttempts(String username) {
+        loginAttempts.remove(cacheKey(username));
+    }
+
+    public static int remainingLoginAttempts(String username) {
+        int maxAttempts = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getMaxLoginAttempts()
+                : 5;
+        int used = loginAttempts.getOrDefault(cacheKey(username), 0);
+        return Math.max(0, maxAttempts - used);
+    }
+
     public static List<String> getRegisteredUsers() {
         List<String> users = new ArrayList<>();
-        if (authDataConfig.contains("users")) {
-            for (String userKey : authDataConfig.getConfigurationSection("users").getKeys(false)) {
+        ConfigurationSection usersSection;
+        synchronized (CONFIG_LOCK) {
+            usersSection = authDataConfig.getConfigurationSection("users");
+            if (usersSection == null) {
+                return users;
+            }
+            for (String userKey : usersSection.getKeys(false)) {
                 String username = authDataConfig.getString("users." + userKey + ".username");
                 if (username != null) {
                     users.add(username);
@@ -334,108 +476,100 @@ public class AuthManager {
 
     public static List<String> getWhitelistedUsers() {
         List<String> users = new ArrayList<>();
-        OfflinePlayer[] whitelistedPlayers = Bukkit.getWhitelistedPlayers().toArray(new OfflinePlayer[0]);
-        for (OfflinePlayer player : whitelistedPlayers) {
-            if (player.getName() != null) {
-                users.add(player.getName());
+        for (String username : getRegisteredUsers()) {
+            if (isUserWhitelisted(username)) {
+                users.add(username);
             }
         }
         return users;
     }
 
     public static boolean removeFromWhitelist(String username) {
-        try {
-            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-            if (offlinePlayer.isWhitelisted()) {
-                offlinePlayer.setWhitelisted(false);
-            }
-            String userKey = getUsernameHash(username);
+        setBukkitWhitelist(username, false);
+        String userKey = getUsernameHash(username);
+        synchronized (CONFIG_LOCK) {
             authDataConfig.set("users." + userKey + ".whitelisted", false);
             configChanged = true;
-            whitelistCache.put(username, false);
-            return true;
-        } catch (Exception e) {
-            System.out.println("Ошибка удаления из вайтлиста: " + e.getMessage());
-            return false;
         }
+        whitelistCache.put(cacheKey(username), false);
+        Handler.kick(username, ChatColor.RED + "Вы удалены из вайтлиста");
+        return true;
     }
 
     public static String getLastIp(String username) {
-        String cached = lastIpCache.get(username);
-        if (cached != null) return cached;
-        String userKey = getUsernameHash(username);
-        String ip = authDataConfig.getString("users." + userKey + ".last_ip");
-        if (ip != null) {
-            lastIpCache.put(username, ip);
-            return ip;
+        String key = cacheKey(username);
+        String cached = lastIpCache.get(key);
+        if (cached != null) {
+            return cached;
         }
-        return null;
+        String userKey = getUsernameHash(username);
+        String ip;
+        synchronized (CONFIG_LOCK) {
+            ip = authDataConfig.getString("users." + userKey + ".last_ip");
+        }
+        if (ip != null) {
+            lastIpCache.put(key, ip);
+        }
+        return ip;
     }
 
     public static void setLastIp(String username, String ip) {
-        try {
-            String userKey = getUsernameHash(username);
+        String userKey = getUsernameHash(username);
+        synchronized (CONFIG_LOCK) {
             authDataConfig.set("users." + userKey + ".last_ip", ip);
             configChanged = true;
-            lastIpCache.put(username, ip);
-        } catch (Exception e) {
-            System.out.println("Ошибка сохранения IP: " + e.getMessage());
         }
+        lastIpCache.put(cacheKey(username), ip);
     }
 
-    // Кикает игрока и меняет пароль на случайный, возвращает новый пароль
     public static String kickAndChangePassword(String username) {
         String newPassword = generateRandomPassword(12);
         String userKey = getUsernameHash(username);
         String hashed = PasswordHasher.hashPassword(newPassword);
-        authDataConfig.set("users." + userKey + ".password", hashed);
-        configChanged = true;
-        Player player = Bukkit.getPlayer(username);
-        if (player != null && pluginInstance != null) {
+        synchronized (CONFIG_LOCK) {
+            authDataConfig.set("users." + userKey + ".password", hashed);
+            configChanged = true;
+        }
+        saveConfigs();
+        pendingTelegramCache.remove(cacheKey(username));
+        authStatusCache.put(cacheKey(username), false);
+        if (pluginInstance != null) {
             Bukkit.getScheduler().runTask(pluginInstance, () -> {
-                player.kickPlayer("internal exception java.net.socketexception connection reset");
+                Player player = Bukkit.getPlayer(username);
+                if (player != null) {
+                    player.kickPlayer("internal exception java.net.socketexception connection reset");
+                }
             });
         }
         return newPassword;
     }
 
     public static boolean changePassword(String username, String newPassword) {
-        try {
-            String userKey = getUsernameHash(username);
-            String hashedPassword = PasswordHasher.hashPassword(newPassword);
+        String userKey = getUsernameHash(username);
+        String hashedPassword = PasswordHasher.hashPassword(newPassword);
+        synchronized (CONFIG_LOCK) {
             authDataConfig.set("users." + userKey + ".password", hashedPassword);
             configChanged = true;
-            saveConfigs();
-            return true;
-        } catch (Exception e) {
-            System.out.println("Ошибка смены пароля: " + e.getMessage());
-            return false;
         }
+        saveConfigs();
+        return true;
     }
 
     public static String generateNewPassword(String username) {
-        try {
-            String newPassword = generateRandomPassword(12);
-            String userKey = getUsernameHash(username);
-            String hashed = PasswordHasher.hashPassword(newPassword);
-            authDataConfig.set("users." + userKey + ".password", hashed);
-            configChanged = true;
-            saveConfigs();
+        String newPassword = generateRandomPassword(12);
+        if (changePassword(username, newPassword)) {
             return newPassword;
-        } catch (Exception e) {
-            System.out.println("Ошибка генерации нового пароля: " + e.getMessage());
-            return null;
         }
+        return null;
     }
 
-    // Генерация случайного пароля
     private static String generateRandomPassword(int length) {
         String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        StringBuilder sb = new StringBuilder();
-        java.util.Random rnd = new java.util.Random();
+        StringBuilder password = new StringBuilder();
+        java.security.SecureRandom random = new java.security.SecureRandom();
         for (int i = 0; i < length; i++) {
-            sb.append(chars.charAt(rnd.nextInt(chars.length())));
+            password.append(chars.charAt(random.nextInt(chars.length())));
         }
-        return sb.toString();
+        return password.toString();
     }
 }

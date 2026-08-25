@@ -10,50 +10,45 @@ package ru.humoridze.telegramAuth.events;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import ru.humoridze.telegramAuth.AuthManager;
-import ru.humoridze.telegramAuth.events.FreezerEvent;
-import ru.humoridze.telegramAuth.events.MuterEvent;
+import ru.humoridze.telegramAuth.TelegramAuth;
 
 public class OnJoinEvent implements Listener {
-    @EventHandler
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onJoin(PlayerJoinEvent event) {
-        Player p = event.getPlayer();
-        String username = p.getName();
+        Player player = event.getPlayer();
+        String username = player.getName();
 
-        if (AuthManager.isUserRegistered(username) &&
-                AuthManager.isUserWhitelisted(username)) {
-
-            // Проверяем совпадение IP
-            String currentIp = p.getAddress().getAddress().getHostAddress();
+        if (AuthManager.isUserRegistered(username) && AuthManager.isUserWhitelisted(username)) {
+            String currentIp = player.getAddress() != null
+                    ? player.getAddress().getAddress().getHostAddress()
+                    : null;
             String lastIp = AuthManager.getLastIp(username);
+            TelegramAuth plugin = TelegramAuth.getInstance();
+            boolean skipPassword = plugin != null && plugin.skipPasswordOnSameIp();
 
-            if (lastIp != null && currentIp.equals(lastIp)) {
-                // IP совпадает - пропускаем ввод пароля, только подтверждение через TG
-                p.sendMessage(ChatColor.GREEN + "IP адрес совпадает с последним входом.");
-                p.sendMessage(ChatColor.YELLOW + "Ожидается подтверждение через Telegram...");
-
-                // Замораживаем игрока до подтверждения через TG
-                FreezerEvent.freezeplayer(username);
-                MuterEvent.mute(username, ChatColor.YELLOW + "Ожидается подтверждение через Telegram");
-
-                // Отправляем запрос на подтверждение в Telegram
-                AuthManager.handleSuccessfulAuth(p);
+            if (skipPassword && lastIp != null && lastIp.equals(currentIp)) {
+                AuthManager.beginAuthSession(
+                        player,
+                        ChatColor.YELLOW + "Ожидается подтверждение через Telegram",
+                        ChatColor.YELLOW + "Подтвердите вход",
+                        "через Telegram"
+                );
+                player.sendMessage(ChatColor.GREEN + "IP адрес совпадает с последним входом.");
+                AuthManager.handleSuccessfulAuth(player);
             } else {
-                // IP изменился или отсутствует - требуем полную авторизацию
                 if (lastIp == null) {
-                    p.sendMessage(ChatColor.YELLOW + "Первый вход с этого IP адреса.");
+                    player.sendMessage(ChatColor.YELLOW + "Первый вход с этого IP адреса.");
                 } else {
-                    p.sendMessage(ChatColor.YELLOW + "IP адрес изменился. Требуется полная авторизация.");
+                    player.sendMessage(ChatColor.YELLOW + "IP адрес изменился. Требуется полная авторизация.");
                 }
-
-                // Стандартная процедура с вводом пароля
-                AuthManager.handlePlayerJoin(p);
+                AuthManager.handlePlayerJoin(player);
             }
         } else {
-            // Если не зарегистрирован или не в вайтлисте - обрабатываем как обычно
-            AuthManager.handlePlayerJoin(p);
+            AuthManager.handlePlayerJoin(player);
         }
     }
 }

@@ -13,6 +13,7 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import ru.humoridze.telegramAuth.AuthManager;
+import ru.humoridze.telegramAuth.TelegramAuth;
 
 public class ChangepasswordCMD implements CommandExecutor {
     @Override
@@ -25,6 +26,11 @@ public class ChangepasswordCMD implements CommandExecutor {
         Player player = (Player) commandSender;
         String username = player.getName();
 
+        if (!AuthManager.isUserAuthenticated(username)) {
+            player.sendMessage(ChatColor.RED + "Сначала авторизуйтесь: /login <пароль>");
+            return true;
+        }
+
         if (strings.length != 3) {
             player.sendMessage(ChatColor.RED + "Использование: /changepassword <старый пароль> <новый пароль> <повторите пароль>");
             return true;
@@ -34,38 +40,34 @@ public class ChangepasswordCMD implements CommandExecutor {
         String newPassword = strings[1];
         String confirmPassword = strings[2];
 
-        // Проверяем, зарегистрирован ли игрок
         if (!AuthManager.isUserRegistered(username)) {
             player.sendMessage(ChatColor.RED + "Вы не зарегистрированы! Зарегистрируйтесь через Telegram бота.");
             return true;
         }
 
-        // Проверяем, совпадают ли новый пароль и подтверждение
         if (!newPassword.equals(confirmPassword)) {
             player.sendMessage(ChatColor.RED + "Новые пароли не совпадают!");
             return true;
         }
 
-        // Проверяем длину нового пароля
-        if (newPassword.length() < 6) {
-            player.sendMessage(ChatColor.RED + "Новый пароль должен содержать минимум 6 символов!");
+        int minLength = TelegramAuth.getInstance() != null
+                ? TelegramAuth.getInstance().getMinPasswordLength()
+                : 6;
+        if (newPassword.length() < minLength) {
+            player.sendMessage(ChatColor.RED + "Новый пароль должен содержать минимум " + minLength + " символов!");
             return true;
         }
 
-        // Проверяем старый пароль
         if (!AuthManager.authenticateUser(username, oldPassword)) {
             player.sendMessage(ChatColor.RED + "Неверный старый пароль!");
             return true;
         }
 
-        // Меняем пароль через AuthManager
         if (AuthManager.changePassword(username, newPassword)) {
             player.sendMessage(ChatColor.GREEN + "Пароль успешно изменен!");
-            
-            // Отправляем уведомление в Telegram с кнопкой
             Long chatId = AuthManager.getTelegramChatId(username);
-            if (chatId != null && ru.humoridze.telegramAuth.TelegramAuth.bot != null) {
-                ru.humoridze.telegramAuth.TelegramAuth.bot.sendPasswordChangeNotification(chatId, username);
+            if (chatId != null && TelegramAuth.bot != null) {
+                TelegramAuth.bot.sendPasswordChangeNotification(chatId, username);
             }
         } else {
             player.sendMessage(ChatColor.RED + "Ошибка при изменении пароля. Попробуйте еще раз.");
