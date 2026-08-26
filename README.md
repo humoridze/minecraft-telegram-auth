@@ -92,4 +92,4 @@ Registration nicknames must match Minecraft rules: 3–16 characters, `A-Z`, `a-
 
 ## License
 
-Proprietary. See `LICENSE`.
+[GNU General Public License v3.0](LICENSE) or later.
