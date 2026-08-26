@@ -5,15 +5,15 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth.commands;
+package ru.codexdev.telegramAuth.commands;
 
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-import ru.humoridze.telegramAuth.AuthManager;
-import ru.humoridze.telegramAuth.TelegramAuth;
+import ru.codexdev.telegramAuth.AuthManager;
+import ru.codexdev.telegramAuth.TelegramAuth;
 
 public class ChangepasswordCMD implements CommandExecutor {
     @Override

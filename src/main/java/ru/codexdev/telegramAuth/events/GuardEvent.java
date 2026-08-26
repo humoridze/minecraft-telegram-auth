@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth.events;
+package ru.codexdev.telegramAuth.events;
 
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Entity;
@@ -37,7 +37,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
-import ru.humoridze.telegramAuth.AuthManager;
+import ru.codexdev.telegramAuth.AuthManager;
 
 public class GuardEvent implements Listener {
 

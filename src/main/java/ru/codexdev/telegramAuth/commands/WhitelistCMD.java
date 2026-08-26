@@ -5,13 +5,13 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth.commands;
+package ru.codexdev.telegramAuth.commands;
 
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
-import ru.humoridze.telegramAuth.AuthManager;
+import ru.codexdev.telegramAuth.AuthManager;
 
 import java.util.List;
 

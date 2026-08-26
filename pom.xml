@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>ru.humoridze</groupId>
+    <groupId>ru.codexdev</groupId>
     <artifactId>TelegramAuth</artifactId>
     <version>2.0</version>
     <packaging>jar</packaging>
@@ -42,23 +42,23 @@
                             <relocations>
                                 <relocation>
                                     <pattern>org.telegram</pattern>
-                                    <shadedPattern>ru.humoridze.telegramAuth.lib.telegram</shadedPattern>
+                                    <shadedPattern>ru.codexdev.telegramAuth.lib.telegram</shadedPattern>
                                 </relocation>
                                 <relocation>
                                     <pattern>org.apache.http</pattern>
-                                    <shadedPattern>ru.humoridze.telegramAuth.lib.http</shadedPattern>
+                                    <shadedPattern>ru.codexdev.telegramAuth.lib.http</shadedPattern>
                                 </relocation>
                                 <relocation>
                                     <pattern>org.apache.commons</pattern>
-                                    <shadedPattern>ru.humoridze.telegramAuth.lib.commons</shadedPattern>
+                                    <shadedPattern>ru.codexdev.telegramAuth.lib.commons</shadedPattern>
                                 </relocation>
                                 <relocation>
                                     <pattern>com.fasterxml.jackson</pattern>
-                                    <shadedPattern>ru.humoridze.telegramAuth.lib.jackson</shadedPattern>
+                                    <shadedPattern>ru.codexdev.telegramAuth.lib.jackson</shadedPattern>
                                 </relocation>
                                 <relocation>
                                     <pattern>org.json</pattern>
-                                    <shadedPattern>ru.humoridze.telegramAuth.lib.json</shadedPattern>
+                                    <shadedPattern>ru.codexdev.telegramAuth.lib.json</shadedPattern>
                                 </relocation>
                             </relocations>
                             <filters>

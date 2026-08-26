@@ -1,6 +1,6 @@
 name: TelegramAuth
 version: '${project.version}'
-main: ru.humoridze.telegramAuth.TelegramAuth
+main: ru.codexdev.telegramAuth.TelegramAuth
 api-version: '1.20'
 author: humoridze
 

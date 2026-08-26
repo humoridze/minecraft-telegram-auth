@@ -5,14 +5,14 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth.events;
+package ru.codexdev.telegramAuth.events;
 
 import org.bukkit.ChatColor;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import ru.humoridze.telegramAuth.AuthManager;
-import ru.humoridze.telegramAuth.TelegramAuth;
+import ru.codexdev.telegramAuth.AuthManager;
+import ru.codexdev.telegramAuth.TelegramAuth;
 
 public class PlayerLoginEvent implements Listener {
 

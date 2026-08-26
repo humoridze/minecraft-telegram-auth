@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth;
+package ru.codexdev.telegramAuth;
 
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;

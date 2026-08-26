@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth;
+package ru.codexdev.telegramAuth;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -20,8 +20,8 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import ru.humoridze.telegramAuth.events.FreezerEvent;
-import ru.humoridze.telegramAuth.events.MuterEvent;
+import ru.codexdev.telegramAuth.events.FreezerEvent;
+import ru.codexdev.telegramAuth.events.MuterEvent;
 
 import java.io.File;
 import java.io.IOException;

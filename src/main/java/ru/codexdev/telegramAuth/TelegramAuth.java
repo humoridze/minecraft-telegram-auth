@@ -5,16 +5,16 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth;
+package ru.codexdev.telegramAuth;
 
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
-import ru.humoridze.telegramAuth.commands.ChangepasswordCMD;
-import ru.humoridze.telegramAuth.commands.LoginCMD;
-import ru.humoridze.telegramAuth.commands.WhitelistCMD;
-import ru.humoridze.telegramAuth.events.GuardEvent;
-import ru.humoridze.telegramAuth.events.MuterEvent;
-import ru.humoridze.telegramAuth.events.OnJoinEvent;
+import ru.codexdev.telegramAuth.commands.ChangepasswordCMD;
+import ru.codexdev.telegramAuth.commands.LoginCMD;
+import ru.codexdev.telegramAuth.commands.WhitelistCMD;
+import ru.codexdev.telegramAuth.events.GuardEvent;
+import ru.codexdev.telegramAuth.events.MuterEvent;
+import ru.codexdev.telegramAuth.events.OnJoinEvent;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
@@ -45,7 +45,7 @@ public final class TelegramAuth extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(new OnJoinEvent(), this);
         Bukkit.getPluginManager().registerEvents(new FreezerEvent(), this);
         Bukkit.getPluginManager().registerEvents(new MuterEvent(), this);
-        Bukkit.getPluginManager().registerEvents(new ru.humoridze.telegramAuth.events.PlayerLoginEvent(), this);
+        Bukkit.getPluginManager().registerEvents(new ru.codexdev.telegramAuth.events.PlayerLoginEvent(), this);
         Bukkit.getPluginManager().registerEvents(new GuardEvent(), this);
 
         getCommand("login").setExecutor(new LoginCMD());

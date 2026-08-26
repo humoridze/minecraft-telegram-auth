@@ -5,7 +5,7 @@
  * Unauthorized copying, modification, or distribution is strictly prohibited.
  */
 
-package ru.humoridze.telegramAuth.events;
+package ru.codexdev.telegramAuth.events;
 
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
